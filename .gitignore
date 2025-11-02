@@ -8,3 +8,6 @@ __pycache__
 # CDK asset staging directory
 .cdk.staging
 cdk.out
+.envrc
+notebooks/.ipynb_checkpoints
+notebooks/__marimo__/session
