@@ -5,13 +5,22 @@ import os
 import aws_cdk as cdk
 
 from lib.lambda_retries_stack import LambdaRetriesStack
+from lib.sns_publish_permissions_stack import SnsPublishPermissionsStack
 
 app = cdk.App()
+env = cdk.Environment(account=os.environ["ACCOUNT_ID"], region=os.environ["REGION"])
 
 LambdaRetriesStack(
     app,
     "LambdaRetriesStack",
-    env=cdk.Environment(account=os.environ["ACCOUNT_ID"], region=os.environ["REGION"]),
+    env=env,
 )
+
+SnsPublishPermissionsStack(
+    app,
+    "SnsPublishPermissionsStack",
+    env=env,
+)
+
 
 app.synth()
