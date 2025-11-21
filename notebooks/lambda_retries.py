@@ -5,15 +5,19 @@ app = marimo.App(width="medium")
 
 
 @app.cell(hide_code=True)
+def _():
+    import marimo as mo
+    return (mo,)
+
+
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     # Lambda Retries
 
-    When a lambda function invocation fails, does the Lambda service retry?
+    When a function invocation fails, does the Lambda service retry it?
     How often, and with what backoff?
     Does it depend on the invocation type (synchronous or asynchronous) or the failure reason (timeout, exception, throttling)?
-
-    Let's find out.
     """)
     return
 
@@ -21,50 +25,52 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Deploy stack
+    ## Stack
 
-    `lib/lambda_retries_stack.py` describes the lambdas we'll deploy.
+    A bunch of functions:
 
-    Export `ACCOUNT_ID` and `REGION` environment variables for your account.
+    - `async_handler_raises_exception`
+    - `sync_handler_raises_exception`
+    - `async_invocation_times_out`
+    - `sync_invocation_times_out`
+    - `async_throttled`
+    - `sync_throttled`
 
-    Then:
+    each doing what its name suggests,
+    and a log group for each.
+
+    The `async*` and `sync*` prefixes just indicate how I'll call the functions,
+    nothing about the functions themselves.
+
+    I have `async` and `sync` versions
+    so I can call them concurrently without getting confused.
+
+    By default functions sends logs to an automatically created log group.
+    But that log group is not configurable
+    (e.g. you should not set its removal policy).
+    So the docs recommend creating your own and passing it in,
+    which is what I've done.
     """)
-    return
-
-
-@app.cell
-def _():
-    import subprocess
-    from pathlib import Path
-    return Path, subprocess
-
-
-@app.cell
-def _(Path):
-    repo_root = Path(__file__).parent.parent
-    return (repo_root,)
-
-
-@app.cell
-def _(repo_root, subprocess):
-    # deploy from repo root so cdk.json is found
-    subprocess.run(
-        ["cdk", "deploy", "--require-approval=never", "LambdaRetriesStack"],
-        check=True,
-        cwd=repo_root,
-    )
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Set up boto3 clients
+    ## Investigation
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Set up boto3 clients
 
     We'll use boto3 to invoke and monitor the functions.
 
-    But boto3 automatically retries for certain errors, such as `ThrottlingException`, by default [1].
-    We don't want boto3 to retry: it would confuse things.
+    But by default boto3 automatically retries for certain errors, such as `ThrottlingException` [1].
+    We don't want boto3 to retry: it would be confusing.
     (Was this function invoked twice because boto3 retried or because Lambda retried?)
     So let's disable.
     """)
@@ -90,10 +96,27 @@ def _(boto3, botocore):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Throttle
+    The `retries` dictionary accepts
+    a `total_max_attempts` key, which _includes_ the initial attempt,
+    or a `max_attempts` key, which _excludes_ it.
+    Confusing!
 
-    Two of the lambdas we've deployed are for checking retries given throttling.
-    So throttle them.
+    Using "retries" is always confusing.
+    Does "third retry" mean third try or fourth try?
+    Throw 0 vs 1-indexing into the mix
+    (say you store an array with an item for each try)
+    and you're asking for trouble.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Throttle
+
+    Two of the lambdas are for checking retries given throttling.
+    So let's throttle them.
     """)
     return
 
@@ -119,7 +142,7 @@ def _(lambda_):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Invoke the functions
+    ### Invoke the functions
     """)
     return
 
@@ -127,7 +150,8 @@ def _(mo):
 @app.cell
 def _():
     import datetime
-    return (datetime,)
+    from pprint import pprint
+    return datetime, pprint
 
 
 @app.cell
@@ -173,37 +197,72 @@ def _(call_times, datetime, lambda_):
 
 
 @app.cell
-def _(botocore, call_times, datetime, lambda_):
+def _(botocore, call_times, datetime, lambda_, pprint):
     call_times["sync_throttled"] = datetime.datetime.now(datetime.UTC)
     try:
         lambda_.invoke(FunctionName="sync_throttled", InvocationType="RequestResponse")
     except botocore.exceptions.ClientError as err:
         if err.response["Error"]["Code"] == "TooManyRequestsException":
-            print("Sync invocation so got TooManyRequestsException")
+            # sync invocation of throttled lambda, so we expect to get TooManyRequestsException
+            pprint(err.response)
         else:
             raise err
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    The sync calls get 200 OK.
+
+    Except for `sync_throttled`,
+    which throws a `TooManyRequestsException`
+    with underlying `'HTTPStatusCode': 429` (TooManyRequests).
+
+    The async calls get 202 Accepted:
+
+    > The request has been received but not yet acted upon.
+    > It is noncommittal, since there is no way in HTTP to later send an asynchronous response indicating the outcome of the request.
+    > It is intended for cases where another process or server handles the request, or for batch processing. [5]
+    """)
+    return
+
+
+@app.cell
+def _(call_times, pprint):
+    pprint(call_times)
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## Investigate retries
-
-    What retries we find depends on how long we wait after invoking.
-    So best to wait a few minutes before continuing.
-
-    We'll `assert` some things about the results conditional on having waited long enough.
-
-    We'll use the logs to find function invocations, since logs have high resolution timestamps.
+    Let's wait a while to give Lambda a chance to retry.
     """)
     return
 
 
 @app.cell
 def _():
-    from pprint import pprint
-    return (pprint,)
+    from time import sleep
+    return (sleep,)
+
+
+@app.cell
+def _(sleep):
+    sleep(5 * 60)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    I'll be using the logs to find function invocations,
+    since logs have high resolution timestamps.
+
+    I'll write a helper for that.
+    """)
+    return
 
 
 @app.cell
@@ -219,12 +278,20 @@ def _(call_times, datetime, logs):
         invocations = [
             datetime.datetime.fromtimestamp(event["timestamp"] / 1000.0, tz=datetime.UTC)
             for event in response["events"]
-            if event["message"].startswith("START")  # the first START will probably be a moment after the boto3 call, because of init time
+            if event["message"].startswith("START")
         ]
         invocations = sorted(invocations)
 
         return invocations
     return (get_invocations_from_logs,)
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    Now let's check retries.
+    """)
+    return
 
 
 @app.cell(hide_code=True)
@@ -236,80 +303,29 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
-    mo.md(r"""
-    First, a sanity check.
-    """)
-    return
-
-
-@app.cell
-def _(call_times, datetime, get_invocations_from_logs):
-    call_time = call_times["async_handler_raises_exception"]
-    print("call time:", call_time)
-
-    first_invocation_time_from_logs = get_invocations_from_logs("async_handler_raises_exception")[0]
-    print("first invocation time:", first_invocation_time_from_logs)
-
-    assert call_time <= first_invocation_time_from_logs <= call_time + datetime.timedelta(seconds=3), "First invocation time not in expected range"
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    So what's the retry behaviour for async invocations where the function errors?
-
-    We can eyeball the retries directly.
-    How many invocations you find depends on when you run the cell.
-    """)
-    return
-
-
-@app.cell
-def _(get_invocations_from_logs, pprint):
+def _(call_times, get_invocations_from_logs, pprint):
+    print("call time:", call_times["async_handler_raises_exception"])
     pprint(get_invocations_from_logs("async_handler_raises_exception"))
     return
 
 
-@app.cell(hide_code=True)
+@app.cell
 def _(mo):
     mo.md(r"""
-    The docs [4] say the retry behaviour in this case is: try, about 1 minute wait, try, about 2 minute wait, try.
+    The first invocation was a moment after the boto3 call.
+    That makes sense: the function has to init first.
+    The second invocation was about 1 minute later.
+    The third was about 2 minutes after that.
 
-    So let's `assert` that.
+    This matches the docs [4]:
+
+    > If the function returns an error,
+    > by default Lambda attempts to run it two more times,
+    > with a one-minute wait between the first two attempts,
+    > and two minutes between the second and third attempts
+
+    except the waits are only _approximately_ one and two minutes.
     """)
-    return
-
-
-@app.cell
-def _(call_times, datetime, get_invocations_from_logs):
-    def assert_three_tries_with_approx_one_and_two_minute_waits(function_name: str) -> None:
-        call_time = call_times[function_name]
-        wiggle = 15
-        if datetime.datetime.now(datetime.UTC) <= call_time + datetime.timedelta(minutes=3, seconds=wiggle):
-            print("Too soon! Skipping asserts. Try re-running in a few minutes.")
-            return
-
-        print("boto3 call time:")
-        print(f"\t{call_times[function_name]}")
-        invocations = get_invocations_from_logs(function_name)
-        print("function invocation times:")
-        for invocation_time in invocations:
-            print(f"\t{invocation_time}")
-
-        assert len(invocations) == 3, f"Expected 3 invocations but found {len(invocations)}"
-        first_invocation_time, second_invocation_time, third_invocation_time = invocations
-        assert call_time - datetime.timedelta(seconds=wiggle) <= first_invocation_time <= call_time + datetime.timedelta(seconds=wiggle), "First invocation time outside expected range"
-        assert call_time + datetime.timedelta(seconds=60 - wiggle) <= second_invocation_time <= call_time + datetime.timedelta(60 + wiggle), "Second invocation time outside expected range"
-        assert call_time + datetime.timedelta(seconds=180 - wiggle) <= third_invocation_time <= call_time + datetime.timedelta(seconds=180 + wiggle), "Third invocation time outside expected range"
-        print("\N{WHITE HEAVY CHECK MARK} Retries as expected.")
-    return (assert_three_tries_with_approx_one_and_two_minute_waits,)
-
-
-@app.cell
-def _(assert_three_tries_with_approx_one_and_two_minute_waits):
-    assert_three_tries_with_approx_one_and_two_minute_waits("async_handler_raises_exception")
     return
 
 
@@ -322,16 +338,26 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
-    mo.md(r"""
-    The same docs say function time outs are treated the same as code errors.
-    """)
+def _(call_times, get_invocations_from_logs, pprint):
+    print("call time:", call_times["async_invocation_times_out"])
+    pprint(get_invocations_from_logs("async_invocation_times_out"))
     return
 
 
 @app.cell
-def _(assert_three_tries_with_approx_one_and_two_minute_waits):
-    assert_three_tries_with_approx_one_and_two_minute_waits("async_invocation_times_out")
+def _(mo):
+    mo.md(r"""
+    Same as for error:
+    try,
+    about 1 minute wait,
+    try,
+    about 2 minute wait,
+    try.
+
+    This matches the docs too:
+
+    > Function errors include errors returned by the function's code and errors returned by the function's runtime, such as timeouts.
+    """)
     return
 
 
@@ -344,16 +370,9 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
-    mo.md(r"""
-    We can't use logs in this case.
-    """)
-    return
-
-
-@app.cell
-def _(get_invocations_from_logs):
-    assert get_invocations_from_logs("async_throttled") == []
+def _(call_times, get_invocations_from_logs, pprint):
+    print("call time:", call_times["async_throttled"])
+    pprint(get_invocations_from_logs("async_throttled"))
     return
 
 
@@ -362,7 +381,7 @@ def _(mo):
     mo.md(r"""
     That makes sense: it's throttled so no invocations so no logs.
 
-    What about the `Throttles` metric?
+    Can we use the `Throttles` metric instead?
     """)
     return
 
@@ -388,24 +407,27 @@ def _(call_times, cloudwatch, datetime):
 
 
 @app.cell
-def _(get_metric_sum):
-    assert get_metric_sum("async_throttled", "Throttles") == []
+def _(get_metric_sum, pprint):
+    pprint(get_metric_sum("async_throttled", "Throttles"))
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     Nope.
 
-    It seems that for throttling due to zero reserved concurrency, nothing is published to the `Throttles` metric.
+    It seems that for throttling due to zero reserved concurrency,
+    nothing is published to the `Throttles` metric.
     So we can't use it to check retries.
 
-    AWS provides some async-specific metrics, including:
+    What to do?
+    I found a helpful aws blog post [2].
+    It describes async-specific metrics, including:
       - `AsyncEventsReceived`, which counts the number of events for this function which arrived in Lambda's internal queue, and
       - `AsyncEventsDropped`, which counts the number of events dropped because of processing failures.
 
-    Let's look at them.
+    Let's try them.
     """)
     return
 
@@ -415,27 +437,27 @@ def _(get_metric_sum, pprint):
     async_events_received = get_metric_sum("async_throttled", "AsyncEventsReceived")
     pprint(async_events_received)
 
-    assert len(async_events_received) == 1
-    [(count, timestamp)] = async_events_received
-    assert count == 1.0
-
     async_events_dropped = get_metric_sum("async_throttled", "AsyncEventsDropped")
     pprint(async_events_dropped)
-
-    assert len(async_events_dropped) == 1
-    [(count, timestamp)] = async_events_dropped
-    assert count == 1.0
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We see that the event was received and immediately dropped.
+    So the event was received and immediately dropped.
 
-    This confirms the docs: no retries for functions with zero reserved concurrency.
+    Conclusion: no retries for functions with zero reserved concurrency.
 
-    But what about retries for genuine throttles?
+    That is mentioned in the blog post, though I haven't found it in the main aws docs.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    But what about retries for _genuine_ throttles?
     That's what we really care about.
     How to investigate that?
 
@@ -449,33 +471,47 @@ def _(mo):
     and we can check retries in that window.
 
     It won't show us retries outside 60s, but it'll be something.
+
+    Here we go.
     """)
     return
 
 
 @app.cell
 def _(lambda_):
-    try:
-        lambda_.put_function_concurrency(FunctionName="async_throttled", ReservedConcurrentExecutions=1)
-    except lambda_.exceptions.InvalidParameterValueException:
-        print("It looks like your account's concurrency quota is too low. Try the modified strategy explained below.")
+    lambda_.put_function_concurrency(FunctionName="async_throttled", ReservedConcurrentExecutions=1)
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    For newish accounts, the default account-level concurrency is 10.
-    Yes, 10.
-    But aws doesn't let you set a function's reserved concurrency if the leftover concurrency would be less than 100.
-    So in that case you can't set reserved concurrency to 1. [3]
+    The first time I tried this,
+    I got an `InvalidParameterValueException`.
+    The message complained that the operation was forbidden
+    because it would reduce my account's `UnreservedConcurrentExecution` below the minimum value of 100.
+    Does that mean my account concurrency was 101?
+    Isn't the default 1000?
 
-    I hit this problem and upped my concurrency quota in aws.
-    You could do the same, or you could follow try this modified strategy:
+    I found a blog post explaining the situation [3].
+    It turns out that for newish accounts, like mine, the default account concurrency is 10.
+    Yes, 10.
+    But aws only lets you set a function's reserved concurrency if
+    you're setting it to 0 (like we did above)
+    or the leftover concurrency would be at least 100.
+
+    What to do?
+    I could have:
     Unset reserved concurrency.
-    Then invoke the function 11 times in quick succession.
-    The first 10 invocations will succeed.
-    The last will be throttled and we can check any retries within 60s.
+    Then invoked the function 11 times in quick succession.
+    The first 10 invocations would succeed.
+    The last would be throttled and we could check retries within 60s.
+
+    But I opted for a simpler approach:
+    I asked to up my account concurrency to 1000,
+    and waited a few hours for aws to approve it.
+
+    Now we can try again.
     """)
     return
 
@@ -491,7 +527,21 @@ def _(call_times, datetime, lambda_):
 @app.cell
 def _(mo):
     mo.md(r"""
-    Now let's check throttles again.
+    We'll wait a bit to give the metrics a chance to update
+    """)
+    return
+
+
+@app.cell
+def _(sleep):
+    sleep(5 * 60)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    then check throttles again.
     """)
     return
 
@@ -502,7 +552,7 @@ def _(get_metric_sum, pprint):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     Nice! We can see that there were a bunch of retries.
@@ -528,7 +578,7 @@ def _(mo):
     `AsyncEventsReceived` only counts an event once, no matter how many retries.
     So it just counted two events, corresponding to our two invocations.
 
-    However, there is another async-specific metric we can use [2]:
+    However, the blog post describes another async-specific metric we can use:
 
     > The `AsyncEventAge` metric is a measure of the difference between the time that an event is first enqueued
     in the internal queue and the time the Lambda service invokes the function.
@@ -593,66 +643,57 @@ def _(call_times, get_invocations_from_logs):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    We asynchronously invoked the function twice at about 01:19:59.
+    We asynchronously invoked the function twice at about 16:29:33.
     So two events got enqueued about then.
 
     Focus on the first `AsyncEventAge` datapoint.
-    It shows Lambda first tried to invoke the function 35ms after enqueueing (`'Minimum': 35`).
+    It shows Lambda first tried to invoke the function 33ms after enqueueing (`'Minimum': 33`).
     That try was successful, the event was removed from the queue, and the function ran for 60s.
-    The datapoint shows one additional try (`'SampleCount': 2`) 2ms later (`'Maximum`: 37`), corresponding to the second event.
-    That try failed.
-
-    The second datapoint shows Lambda tried to invoke the function 6 more times,
-    the first of those about 1s after enqueuing,
-    and the last about 59s after.
+    The datapoint shows 5 additional tries (`'SampleCount': 6`),
+    all for the second event,
+    the last of which was about 17s after enqueueing (`'Maximum`: 16645`).
     We can't tell exactly when the intermediate tries were,
-    but the numbers (`'Average': 19675`) are consistent with expanding waits between tries.
+    but the numbers (`'Average': 4791`) suggest expanding waits between tries.
     (This is why we fetched all four metrics.)
-    Again, all the tries failed.
+    Those tries all failed.
 
-    The third datapoint shows Lambda tried yet again about 117s after enqueuing.
-    This try was successful and the function started running at about 01:21:56.
+    The second datapoint shows Lambda tried again to invoke the function
+    about 33s after enqeueing (`'Minimum': 32790`).
+    That try failed too.
+    It tried yet again about 68s after enqueueing (`'Maximum': 67932`).
+    That try was successful,
+    because the first run had completed by then,
+    and the function re-started at about 16:30:42.
     So no more datapoints.
-
-    Lambda could have successfully tried earlier than 117s after enqueuing.
-    The concurrency was only used up for 60s.
-    But Lambda couldn't know that.
-
-    It also looks from the numbers that Lambda uses _jittered_ backoff.
 
     In short:
     for the throttled invocation
-    there were 7 failed tries in the 60s window
-    followed by 1 successful try quite a while later.
+    there were 6 failed tries in the 60s window
+    followed by 1 successful try a bit later.
 
-    Let's `assert` about this as best we can.
+    This matches the docs:
+
+    > For throttling errors (429) and system errors (500-series),
+    > Lambda returns the event to the queue and attempts to run the function again for up to 6 hours by default.
+    > The retry interval increases exponentially from 1 second after the first attempt to a maximum of 5 minutes.
+
+    except the the docs don't explicitly say what's plain from the numbers:
+    that Lambda uses _jittered_ backoff.
+
+    Lambda could have successfully tried earlier than 68s after enqueuing.
+    The concurrency was only used up for 60s.
+    But Lambda couldn't know that.
     """)
     return
 
 
 @app.cell
-def _(get_async_event_age_metric):
-    def assert_at_least_five_tries(function_name: str) -> None:
-        datapoints = get_async_event_age_metric(function_name)
-        assert sum(datapoint["SampleCount"] for datapoint in datapoints) >= 5
-        # it would be nice to assert capped increasing intervals, but how to do it robustly?
-        print("\N{WHITE HEAVY CHECK MARK} Retries as expected.")
-    return (assert_at_least_five_tries,)
-
-
-@app.cell
-def _(assert_at_least_five_tries):
-    assert_at_least_five_tries("async_throttled")
-    return
-
-
-@app.cell
 def _(mo):
     mo.md(r"""
-    ### Synchronous, exception
+    ### synchronous, exception
     """)
     return
 
@@ -668,68 +709,62 @@ def _(mo):
     and the connection is closed.
     So if a failed invocation were retried, it's too late to respond.
 
+    The _caller_ may retry
+    (whether that's you, or an aws service, or whatever).
+    But Lambda itself does not — could not sensibly — retry.
+
     Still, for completeness, let's check.
     """)
     return
 
 
 @app.cell
-def _(call_times, get_invocations_from_logs):
-    def assert_one_invocation_only(function_name: str) -> None:
-        print("boto3 call time:")
-        print(f"\t{call_times[function_name]}")
-        invocations = get_invocations_from_logs(function_name)
-        print("function invocation times:")
-        for invocation_time in invocations:
-            print(f"\t{invocation_time}")
-
-        assert len(invocations) == 1, f"Expected 1 invocation but got {len(invocations)}"
-        print("\N{WHITE HEAVY CHECK MARK} Retries as expected.")
-    return (assert_one_invocation_only,)
-
-
-@app.cell
-def _(assert_one_invocation_only):
-    assert_one_invocation_only("sync_handler_raises_exception")
+def _(get_invocations_from_logs, pprint):
+    pprint(get_invocations_from_logs("sync_handler_raises_exception"))
     return
 
 
 @app.cell
 def _(mo):
     mo.md(r"""
-    ### Synchronous, timeout
+    One invocation only, as expected.
     """)
-    return
-
-
-@app.cell
-def _(assert_one_invocation_only):
-    assert_one_invocation_only("sync_invocation_times_out")
     return
 
 
 @app.cell
 def _(mo):
     mo.md(r"""
-    ### Synchronous, throttled
+    ### synchronous, timeout
     """)
     return
 
 
 @app.cell
-def _(get_metric_sum):
-    def assert_only_one_throttle(function_name: str) -> None:
-        throttles_datapoints = get_metric_sum("sync_throttled", "Throttles")
-        assert len(throttles_datapoints) == 1
-        value, timestamp = throttles_datapoints[0]
-        assert value == 1.0
-        print("\N{WHITE HEAVY CHECK MARK} Retries as expected")
-    return (assert_only_one_throttle,)
+def _(get_invocations_from_logs, pprint):
+    pprint(get_invocations_from_logs("sync_invocation_times_out"))
+    return
 
 
 @app.cell
-def _(assert_only_one_throttle):
-    assert_only_one_throttle("sync_throttled")
+def _(mo):
+    mo.md(r"""
+    Ditto.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ### synchronous, throttled
+    """)
+    return
+
+
+@app.cell
+def _(get_invocations_from_logs, pprint):
+    pprint(get_invocations_from_logs("sync_throttled"))
     return
 
 
@@ -737,30 +772,31 @@ def _(assert_only_one_throttle):
 def _(mo):
     mo.md(r"""
     No retries.
+
     We saw the same with the asynchronous invocation.
-    But in that case, there _were_ retries for genuine throttles (rather than zero reserved concurrency).
+    But in that case, there _were_ retries for genuine throttles
+    (rather than throttles because of zero reserved concurrency).
     Is it the same here?
 
     Surely not, for reasons explained above.
-    But let's check anyway.
+    But let's confirm anyway.
 
     We'll set reserved concurrency to 1
     then synchronously invoke the function twice, like before.
-    But for a synchronous invocation, the boto3 call blocks until the function returns.
+
+    For a synchronous invocation, the boto3 call blocks until the function returns.
     So invoking the function twice in a loop won't tell us anything:
     the second invocation will only happen after the first has completed,
     and both will succeed.
-    What we can do instead is to invoke in two threads.
+
+    What we can do instead is to invoke concurrently, in two threads.
     """)
     return
 
 
 @app.cell
 def _(lambda_):
-    try:
-        lambda_.put_function_concurrency(FunctionName="sync_throttled", ReservedConcurrentExecutions=1)
-    except lambda_.exceptions.InvalidParameterValueException:
-        print("It looks like your account's concurrency quota is too low.")
+    lambda_.put_function_concurrency(FunctionName="sync_throttled", ReservedConcurrentExecutions=1)
     return
 
 
@@ -777,7 +813,7 @@ def _(botocore, lambda_):
 
 @app.cell
 def _(call_times, datetime, invoke_and_suppress_throttling_exception):
-    # this will take as long as the lambda function takes
+    # this will run for at least as long as the function runs
     from threading import Thread
 
     call_times["sync_throttled"] = datetime.datetime.now(datetime.UTC)
@@ -791,8 +827,22 @@ def _(call_times, datetime, invoke_and_suppress_throttling_exception):
 
 
 @app.cell
-def _(assert_only_one_throttle):
-    assert_only_one_throttle("sync_throttled")
+def _(sleep):
+    sleep(2 * 60)
+    return
+
+
+@app.cell
+def _(get_metric_sum, pprint):
+    pprint(get_metric_sum("sync_throttled", "Throttles"))
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    As expected: 1 throttle, meaning 0 retries.
+    """)
     return
 
 
@@ -800,30 +850,18 @@ def _(assert_only_one_throttle):
 def _(mo):
     mo.md(r"""
     ## Summary
+    """)
+    return
 
-    |           | **exception or timeout**              | **throttled because zero provisioned concurrency** | **throttled normally**                                                               |
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    |           | **exception or timeout**              | **throttled because zero provisioned concurrency** | **genuine throttle**                                                               |
     |-----------|---------------------------------------|----------------------------------------------------|--------------------------------------------------------------------------------------|
     | **async** | try, ~1m wait, retry, ~2m wait, retry | no retry                                           | capped jittered exponential backoff until timeout<br>(typically: cap 5m, timeout 6h) |
     | **sync**  | no retry                              | no retry                                           | no retry                                                                             |
-    """)
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md(r"""
-    ## Clean up
-    """)
-    return
-
-
-@app.cell
-def _(repo_root, subprocess):
-    subprocess.run(
-        ["cdk", "destroy", "--force", "LambdaRetriesStack"],
-        check=True,
-        cwd=repo_root,
-    )
+    """)# noqa: E501
     return
 
 
@@ -839,14 +877,10 @@ def _(mo):
     [3] https://benellis.cloud/my-lambda-concurrency-applied-quota-is-only-10-but-why
 
     [4] https://docs.aws.amazon.com/lambda/latest/dg/invocation-async-error-handling.html
+
+    [5] https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status#successful_responses
     """)
     return
-
-
-@app.cell
-def _():
-    import marimo as mo
-    return (mo,)
 
 
 if __name__ == "__main__":
