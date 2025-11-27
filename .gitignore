@@ -10,5 +10,4 @@ __pycache__
 cdk.out
 .envrc
 notebooks/.ipynb_checkpoints
-notebooks/__marimo__/session
-__marimo__/session
+__marimo__
