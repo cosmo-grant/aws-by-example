@@ -25,7 +25,7 @@ def main():
     source_folder = get_source_folder()
 
     files = [file for file in source_folder.iterdir() if file.name != "index.html"]
-    files.sort(key=lambda file: file.stat().st_ctime, reverse=True)  # newest created first
+    files.sort()
 
     rendered = index_template.render(files=[(file.name, get_display_name(file)) for file in files])
     with open(source_folder / "index.html", "w") as f:
