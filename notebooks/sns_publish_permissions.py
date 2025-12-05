@@ -1,13 +1,12 @@
 import marimo
 
-__generated_with = "0.17.7"
+__generated_with = "0.18.1"
 app = marimo.App(width="medium")
 
 
 @app.cell(hide_code=True)
 def _():
     import marimo as mo
-
     return (mo,)
 
 
@@ -22,8 +21,6 @@ def _(mo):
 @app.cell
 def _(mo):
     mo.md(r"""
-    ## Context
-
     When Bad Thing happens, aws puts an event onto our event bus.
     We have an eventbridge rule to publish the event to an sns topic so that we get emailed.
     But no email arrived.
@@ -48,7 +45,7 @@ def _(mo):
     What are the default permissions?
     How do the cdk methods modify them?
 
-    Let's investigate using a simple stack.
+    I'll investigate using a simple stack.
     """)
     return
 
@@ -61,7 +58,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     mo.mermaid(
         """
@@ -95,13 +92,12 @@ def _(mo):
 @app.cell
 def _():
     from datetime import datetime, timezone
-    from pprint import pprint
 
     import boto3
 
     lambda_ = boto3.client("lambda")
     events = boto3.client("events")
-    return boto3, datetime, events, lambda_, pprint, timezone
+    return boto3, datetime, events, lambda_, timezone
 
 
 @app.cell
@@ -121,20 +117,20 @@ def _(datetime, events, lambda_, timezone):
 
 
 @app.cell
-def _(pprint, start_time):
-    pprint(start_time)
+def _(start_time):
+    start_time
     return
 
 
 @app.cell
-def _(invoke_response, pprint):
-    pprint(invoke_response)
+def _(invoke_response):
+    assert invoke_response["StatusCode"] == 200
     return
 
 
 @app.cell
-def _(pprint, put_events_response):
-    pprint(put_events_response)
+def _(put_events_response):
+    assert put_events_response["FailedEntryCount"] == 0
     return
 
 
@@ -162,8 +158,8 @@ def _(boto3):
 
 
 @app.cell
-def _(cloudwatch, datetime, pprint, start_time, timezone):
-    r1 = cloudwatch.get_metric_statistics(
+def _(cloudwatch, datetime, start_time, timezone):
+    cloudwatch.get_metric_statistics(
         MetricName="Invocations",
         Namespace="AWS/Lambda",
         Dimensions=[{"Name": "FunctionName", "Value": "pre_existing_topic_target"}],
@@ -171,15 +167,13 @@ def _(cloudwatch, datetime, pprint, start_time, timezone):
         EndTime=datetime.now(timezone.utc),
         Statistics=["Sum"],
         Period=60,
-    )
-
-    pprint(r1["Datapoints"])
+    )["Datapoints"]
     return
 
 
 @app.cell
-def _(cloudwatch, datetime, pprint, start_time, timezone):
-    r2 = cloudwatch.get_metric_statistics(
+def _(cloudwatch, datetime, start_time, timezone):
+    cloudwatch.get_metric_statistics(
         MetricName="Invocations",
         Namespace="AWS/Lambda",
         Dimensions=[{"Name": "FunctionName", "Value": "topic_target"}],
@@ -187,9 +181,7 @@ def _(cloudwatch, datetime, pprint, start_time, timezone):
         EndTime=datetime.now(timezone.utc),
         Statistics=["Sum"],
         Period=60,
-    )
-
-    pprint(r2["Datapoints"])
+    )["Datapoints"]
     return
 
 
@@ -202,14 +194,12 @@ def _(mo):
 
 
 @app.cell
-def _(cloudwatch, datetime, pprint, start_time, timezone):
-    r3 = cloudwatch.describe_alarm_history(
+def _(cloudwatch, datetime, start_time, timezone):
+    cloudwatch.describe_alarm_history(
         StartDate=start_time,
         EndDate=datetime.now(timezone.utc),
         AlarmName="noop_lambda_invocation_alarm",
-    )
-
-    pprint(r3)
+    )["AlarmHistoryItems"]
     return
 
 
@@ -237,9 +227,9 @@ def _(boto3):
 
 
 @app.cell
-def _(environ, json, pprint, sns):
-    r4 = sns.get_topic_attributes(TopicArn=f"arn:aws:sns:{environ['REGION']}:{environ['ACCOUNT_ID']}:pre_existing_topic")
-    pprint(json.loads(r4["Attributes"]["Policy"]))
+def _(environ, json, sns):
+    _ = sns.get_topic_attributes(TopicArn=f"arn:aws:sns:{environ['REGION']}:{environ['ACCOUNT_ID']}:pre_existing_topic")
+    json.loads(_["Attributes"]["Policy"])
     return
 
 
@@ -254,9 +244,9 @@ def _(mo):
 
 
 @app.cell
-def _(environ, json, pprint, sns):
-    r5 = sns.get_topic_attributes(TopicArn=f"arn:aws:sns:{environ['REGION']}:{environ['ACCOUNT_ID']}:my_topic")
-    pprint(json.loads(r5["Attributes"]["Policy"]))
+def _(environ, json, sns):
+    _ = sns.get_topic_attributes(TopicArn=f"arn:aws:sns:{environ['REGION']}:{environ['ACCOUNT_ID']}:my_topic")
+    json.loads(_["Attributes"]["Policy"])
     return
 
 
@@ -279,7 +269,17 @@ def _(mo):
     `add_target` modifies the access policy, permitting eventbridge.
     But `add_alarm_action` does not:
     you have to give cloudwatch permission yourself.
-    A surprising difference between the two methods.
+    That's the **first surprise**.
+
+    The **second surprise** is that `add_target` doesn't add permissions
+    on top of the default `AWS:SourceOwner` policy.
+    Instead, it replaces the default policy.
+    The docs make this clear for `add_to_resource_policy`:
+
+    > If this topic was created in this stack (`new Topic`), a topic policy will be automatically created upon the first call to `addToResourcePolicy`.
+
+    and I suppose it's implicit that the same applies to other permissions-changing methods,
+    such as `add_target`.
 
     I created the pre-existing topic in another stack, with all defaults.
     It has the default policy based on `AWS:SourceOwner`.
@@ -287,9 +287,9 @@ def _(mo):
     then added subscriptions via `add_target` and `add_alarm_action`.
     Because the topic was imported,
     neither method changed the access policy.
-    But — another surprise — cloudwatch passes the policy and events doesn't.
+    But — **third surprise** — cloudwatch passes the policy and events doesn't.
 
-    A third surprise.
+    A **fourth surprise**.
     It makes sense that the cdk methods didn't change the pre-existing topic's policy.
     It would be confusing if stacks could modify resources they didn't create.
     Except sometimes they do!
@@ -321,6 +321,8 @@ def _(mo):
 
     AWS say they're not going to document `SourceOwner` because deprecated.
     Ok, but then, as one of the comments says, why keep using it in the default policy?
+
+    [3] https://docs.aws.amazon.com/cdk/api/v2/python/aws_cdk.aws_sns/Topic.html#aws_cdk.aws_sns.Topic.add_to_resource_policy
     """)
     return
 
