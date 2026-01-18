@@ -7,6 +7,7 @@ import aws_cdk as cdk
 from lib.lambda_ephemeral_storage_stack import LambdaEphemeralStorage
 from lib.lambda_responses_and_logs_stack import LambdaResponsesAndLogsStack
 from lib.lambda_retries_stack import LambdaRetriesStack
+from lib.lambda_who_what_where_stack import LambdaWhoWhatWhereStack
 from lib.sns_publish_permissions_stack import SnsPublishPermissionsStack
 
 app = cdk.App()
@@ -36,4 +37,10 @@ LambdaEphemeralStorage(
     env=env,
 )
 
+
+LambdaWhoWhatWhereStack(
+    app,
+    "LambdaWhoWhatWhereStack",
+    env=env,
+)
 app.synth()
