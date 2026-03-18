@@ -5,6 +5,7 @@ import os
 import aws_cdk as cdk
 
 from lib.lambda_ephemeral_storage_stack import LambdaEphemeralStorage
+from lib.lambda_layer_merging_stack import LambdaLayerMergingStack
 from lib.lambda_responses_and_logs_stack import LambdaResponsesAndLogsStack
 from lib.lambda_retries_stack import LambdaRetriesStack
 from lib.lambda_who_what_where_stack import LambdaWhoWhatWhereStack
@@ -43,4 +44,11 @@ LambdaWhoWhatWhereStack(
     "LambdaWhoWhatWhereStack",
     env=env,
 )
+
+LambdaLayerMergingStack(
+    app,
+    "LambdaLayerMergingStack",
+    env=env,
+)
+
 app.synth()

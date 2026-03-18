@@ -11,3 +11,4 @@ cdk.out
 .envrc
 notebooks/.ipynb_checkpoints
 __marimo__
+/scratchpad.md
