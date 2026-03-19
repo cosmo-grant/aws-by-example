@@ -1,7 +1,7 @@
 checks:
-  ruff format
-  ruff check --fix
-  mypy .
+  ruff format --exclude lib/resources/layers/
+  ruff check --fix --exclude lib/resources/layers/
+  mypy --exclude lib/resources/layers .
 
 open:
   open https://cosmo-grant.github.io/aws-by-example/
