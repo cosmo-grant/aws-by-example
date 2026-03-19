@@ -1,3 +1,3 @@
 # aws-by-example
 
-Illustrates interesting AWS behaviour using simple, deployable examples, because seeing is believing.
+Explore interesting AWS behaviour using simple, deployable examples. Because seeing is believing.
