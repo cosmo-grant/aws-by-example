@@ -260,7 +260,7 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    And after all that I spotted this note [3]:
+    And after all that I spotted this note [1]:
 
     >If you use Application Auto Scaling to manage your function's provisioned concurrency,
     >ensure that you configure an initial provisioned concurrency value first.
